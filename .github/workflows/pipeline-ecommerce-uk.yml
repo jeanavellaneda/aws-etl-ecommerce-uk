@@ -11,6 +11,12 @@ env:
   ARTIFACTS_BUCKET: etl-retail-artifacts-bucket
   REGION: us-east-1
 
+# NUEVO: Verificar que las credenciales funcionan
+- name: Verify AWS credentials
+  run: |
+    aws sts get-caller-identity
+    echo "✅ Credenciales funcionando correctamente"
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
