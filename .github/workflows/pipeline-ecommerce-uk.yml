@@ -11,11 +11,6 @@ env:
   ARTIFACTS_BUCKET: etl-retail-artifacts-bucket
   REGION: us-east-1
 
-- name: Verify AWS credentials
-  run: |
-    aws sts get-caller-identity
-    echo "✅ Credenciales funcionando correctamente"
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -30,6 +25,11 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.REGION }}
+
+    - name: Verify AWS credentials
+      run: |
+        aws sts get-caller-identity
+        echo "✅ Credenciales funcionando correctamente"
 
     # ---------------- SCRIPTS ----------------
     - name: Upload Glue script
