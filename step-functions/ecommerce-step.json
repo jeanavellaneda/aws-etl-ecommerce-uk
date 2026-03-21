@@ -6,7 +6,7 @@
         "Type": "Task",
         "Resource": "arn:aws:states:::glue:startJobRun",
         "Parameters": {
-          "JobName": "ecommerce-glue-job-iac",
+          "JobName": "{{GLUE_JOB_NAME}}",
           "Arguments": {
             "--input_key.$": "$.input_key",
             "--input_bucket.$": "$.input_bucket"
@@ -24,7 +24,7 @@
         "Type": "Task",
         "Resource": "arn:aws:states:::aws-sdk:glue:getJobRun",
         "Parameters": {
-          "JobName": "ecommerce-glue-job-iac",
+          "JobName": "{{GLUE_JOB_NAME}}",
           "RunId.$": "$.glueResult.JobRunId"
         },
         "ResultPath": "$.glueStatus",
