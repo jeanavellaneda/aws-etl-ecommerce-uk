@@ -2,41 +2,47 @@ import json
 import boto3
 import os
 
+print("=== LAMBDA INICIANDO ===")
+print(f"STEP_ARN desde entorno: {os.environ.get('STEP_ARN', 'NO EXISTE')}")
+
 stepfunctions = boto3.client('stepfunctions')
 STEP_ARN = os.environ['STEP_ARN']
 
 def lambda_handler(event, context):
+    print("=== HANDLER EJECUTANDOSE ===")
+    print(f"Tipo de event: {type(event)}")
+    print(f"Event completo: {json.dumps(event, indent=2)}")
+    
     try:
-        logger.info("=== Lambda invocada ===")
-        print(f"Event recibido: {json.dumps(event, indent=2)}")
-        
-        s3_key = event['detail']['object']['key']
+        # Extraer datos correctamente
         s3_bucket = event['detail']['bucket']['name']
-
+        s3_key = event['detail']['object']['key']
+        
+        print(f"Bucket encontrado: {s3_bucket}")
+        print(f"Key encontrado: {s3_key}")
+        
         input_payload = {
             "input_key": s3_key,
             "input_bucket": s3_bucket
         }
         
         print(f"Iniciando Step Function: {STEP_ARN}")
-        print(f"Input: {json.dumps(input_payload)}")
-
+        
         response = stepfunctions.start_execution(
             stateMachineArn=STEP_ARN,
             input=json.dumps(input_payload)
         )
-
-        logger.info(f"Step Function ejecutada: {response['executionArn']}")
+        
+        print(f"Step Function iniciada: {response['executionArn']}")
         
         return {
             'statusCode': 200,
-            'body': json.dumps({
-                'message': "Glue Job ejecutado correctamente",
-                'JobRunId': response['JobRunId']
-            })
+            'body': json.dumps({'executionArn': response['executionArn']})
         }
+        
     except Exception as e:
+        print(f"ERROR: {str(e)}")
         return {
             'statusCode': 500,
-            'body': json.dumps(f'Error al ejecutar Step Function: {str(e)}')
+            'body': json.dumps({'error': str(e)})
         }

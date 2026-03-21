@@ -70,7 +70,7 @@ jobs:
 
     - name: Upload Step Function
       run: |
-        aws s3 cp step-functions/ecommerce-step.json s3://${ARTIFACTS_BUCKET}/stepfunctions/ecommerce-step.json
+        aws s3 cp step-functions/ecommerce-step-processed.json s3://${ARTIFACTS_BUCKET}/stepfunctions/ecommerce-step.json
 
     # ---------------- INFRA ----------------
     - name: Deploy CloudFormation
