@@ -6,10 +6,15 @@ Parameters:
     Type: String
     Description: Nombre del bucket S3 donde están los scripts (creado manualmente)
   
-  GlueScriptKey:
+  GlueScriptBronzeKey:
     Type: String
-    Description: Ruta del script de Glue en el bucket
-    Default: scripts/ecommerce-glue-job.py
+    Description: Ruta del script de Glue bronze en el bucket
+    Default: scripts/bronze/ecommerce-glue-job-bronze.py
+
+  GlueScriptSilverKey:
+    Type: String
+    Description: Ruta del script de Glue silver en el bucket
+    Default: scripts/silver/ecommerce-glue-job-silver.py
   
   LambdaPackageKey:
     Type: String
@@ -131,14 +136,31 @@ Resources:
         S3Key: !Ref LambdaPackageKey
 
 # ---------------- GLUE ----------------
-  GlueJob:
+  GlueJobBronze:
     Type: AWS::Glue::Job
     Properties:
-      Name: !Sub "retail-glue-job-iac-${EnvironmentName}"
+      Name: !Sub "retail-glue-job-bronze-iac-${EnvironmentName}"
       Role: !GetAtt GlueRole.Arn
       Command:
         Name: glueetl
-        ScriptLocation: !Sub "s3://${ArtifactsBucket}/${GlueScriptKey}"
+        ScriptLocation: !Sub "s3://${ArtifactsBucket}/${GlueScriptBronzeKey}"
+        PythonVersion: 3
+      GlueVersion: "5.0"
+      DefaultArguments:
+        "--enable-glue-datacatalog": "true"
+        "--job-language": "python"
+        "--TempDir": !Sub "s3://${DataLakeBucket}/temp/"
+        "--enable-continuous-cloudwatch-log": "true"
+        "--enable-metrics": "true"
+
+  GlueJobSilver:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "retail-glue-job-silver-iac-${EnvironmentName}"
+      Role: !GetAtt GlueRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${ArtifactsBucket}/${GlueScriptSilverKey}"
         PythonVersion: 3
       GlueVersion: "5.0"
       DefaultArguments:
@@ -247,9 +269,13 @@ Outputs:
     Description: Step Function ARN
     Value: !Ref StepFunction
   
-  GlueJob:
-    Description: Glue job name
-    Value: !Ref GlueJob
+  GlueJobBronze:
+    Description: Glue job bronze name
+    Value: !Ref GlueJobBronze
+
+  GlueJobSilver:
+    Description: Glue job silver name
+    Value: !Ref GlueJobSilver
   
   AthenaDatabase:
     Description: Athena database name

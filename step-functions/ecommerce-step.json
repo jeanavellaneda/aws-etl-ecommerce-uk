@@ -1,63 +1,68 @@
 {
-    "Comment": "Pipeline que transforma datos de Bronze a Gold",
-    "StartAt": "Ejecutar Glue Job",
-    "States": {
-      "Ejecutar Glue Job": {
-        "Type": "Task",
-        "Resource": "arn:aws:states:::glue:startJobRun",
-        "Parameters": {
-          "JobName": "{{GLUE_JOB_NAME}}",
-          "Arguments": {
-            "--input_key.$": "$.input_key",
-            "--input_bucket.$": "$.input_bucket"
-          }
-        },
-        "ResultPath": "$.glueResult",
-        "Next": "Esperar 30 segundos"
+  "Comment": "ETL Pipeline Medallion Architecture",
+  "StartAt": "Bronze to Silver",
+  "States": {
+    "Bronze to Silver": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "{{GLUE_JOB_BRONZE_NAME}}",
+        "Arguments": {
+          "--input_key.$": "$.input_key",
+          "--input_bucket.$": "$.input_bucket"
+        }
       },
-      "Esperar 30 segundos": {
-        "Type": "Wait",
-        "Seconds": 30,
-        "Next": "Verificar Glue Job"
+      "Retry": [
+        {
+          "ErrorEquals": ["GlueException", "States.TaskFailed"],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Error"
+        }
+      ],
+      "ResultPath": "$.silverOutput",
+      "Next": "Silver to Gold"
+    },
+    "Silver to Gold": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "{{GLUE_JOB_SILVER_NAME}}",
+        "Arguments": {
+          "--input_path.$": "$.silverOutput.outputPath",
+          "--output_bucket.$": "$.input_bucket"
+        }
       },
-      "Verificar Glue Job": {
-        "Type": "Task",
-        "Resource": "arn:aws:states:::aws-sdk:glue:getJobRun",
-        "Parameters": {
-          "JobName": "{{GLUE_JOB_NAME}}",
-          "RunId.$": "$.glueResult.JobRunId"
-        },
-        "ResultPath": "$.glueStatus",
-        "Next": "Evaluar Estado del Glue Job"
-      },
-      "Evaluar Estado del Glue Job": {
-        "Type": "Choice",
-        "Choices": [
-          {
-            "Variable": "$.glueStatus.JobRun.JobRunState",
-            "StringEquals": "SUCCEEDED",
-            "Next": "Exito"
-          },
-          {
-            "Variable": "$.glueStatus.JobRun.JobRunState",
-            "StringEquals": "FAILED",
-            "Next": "Fallo en Glue"
-          },
-          {
-            "Variable": "$.glueStatus.JobRun.JobRunState",
-            "StringEquals": "TIMEOUT",
-            "Next": "Fallo en Glue"
-          }
-        ],
-        "Default": "Esperar 30 segundos"
-      },
-      "Fallo en Glue": {
-        "Type": "Fail",
-        "Error": "GlueJobFailed",
-        "Cause": "El Glue Job no se completó correctamente"
-      },
-      "Exito": {
-        "Type": "Succeed"
-      }
+      "Retry": [
+        {
+          "ErrorEquals": ["GlueException", "States.TaskFailed"],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Error"
+        }
+      ],
+      "ResultPath": "$.goldResult",
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    },
+    "Error": {
+      "Type": "Fail",
+      "Error": "ETLPipelineFailed",
+      "Cause": "Error en el proceso ETL"
     }
   }
+}

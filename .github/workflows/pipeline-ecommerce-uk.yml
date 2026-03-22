@@ -44,17 +44,21 @@ jobs:
           ENV_NAME="dev"
         fi
         echo "ENV_NAME=${ENV_NAME}" >> $GITHUB_ENV
-        echo "GLUE_JOB_NAME=retail-glue-job-iac-${ENV_NAME}" >> $GITHUB_ENV
+        echo "GLUE_JOB_BRONZE_NAME=retail-glue-job-bronze-iac-${ENV_NAME}" >> $GITHUB_ENV
+        echo "GLUE_JOB_SILVER_NAME=retail-glue-job-silver-iac-${ENV_NAME}" >> $GITHUB_ENV
         
         echo "=== DEBUG ==="
         echo "Branch: ${BRANCH_NAME}"
         echo "ENV_NAME: ${ENV_NAME}"
-        echo "GLUE_JOB_NAME: retail-glue-job-iac-${ENV_NAME}"
+        echo "GLUE_JOB_BRONZE_NAME: retail-glue-job-bronze-iac-${ENV_NAME}"
+        echo "GLUE_JOB_SILVER_NAME: retail-glue-job-silver-iac-${ENV_NAME}"
 
     # ---------------- SCRIPTS ----------------
     - name: Upload Glue script
       run: |
-        aws s3 cp glue/ecommerce-glue-job.py s3://${ARTIFACTS_BUCKET}/scripts/ecommerce-glue-job.py
+        aws s3 cp glue/bronze/ecommerce-glue-job-bronze.py s3://${ARTIFACTS_BUCKET}/scripts/bronze/ecommerce-glue-job-bronze.py
+        aws s3 cp glue/silver/ecommerce-glue-job-silver.py s3://${ARTIFACTS_BUCKET}/scripts/silver/ecommerce-glue-job-silver.py
+        echo "✅ Scripts de Glue subidos correctamente"
 
     - name: Package Lambda
       run: |
@@ -69,8 +73,10 @@ jobs:
     # PROCESAR STEP FUNCTION: Reemplazar placeholder con el nombre real del Glue Job
     - name: Process Step Function Definition
       run: |
-        echo "Reemplazando {{GLUE_JOB_NAME}} con: ${{ env.GLUE_JOB_NAME }}"
-        sed "s/{{GLUE_JOB_NAME}}/${{ env.GLUE_JOB_NAME }}/g" step-functions/ecommerce-step.json > step-functions/ecommerce-step-processed.json
+        echo "Reemplazando placeholders..."
+        sed -e "s/{{GLUE_JOB_BRONZE_NAME}}/${{ env.GLUE_JOB_BRONZE_NAME }}/g" \
+            -e "s/{{GLUE_JOB_SILVER_NAME}}/${{ env.GLUE_JOB_SILVER_NAME }}/g" \
+            step-functions/ecommerce-step.json > step-functions/ecommerce-step-processed.json
         echo "=== JSON PROCESADO ==="
         cat step-functions/ecommerce-step-processed.json
         echo "====================="
@@ -87,7 +93,8 @@ jobs:
           --stack-name retail-etl-stack-${{ env.ENV_NAME }} \
           --parameter-overrides \
             ArtifactsBucket=${ARTIFACTS_BUCKET} \
-            GlueScriptKey=scripts/ecommerce-glue-job.py \
+            GlueScriptBronzeKey=scripts/bronze/ecommerce-glue-job-bronze.py \
+            GlueScriptSilverKey=scripts/silver/ecommerce-glue-job-silver.py \
             LambdaPackageKey=lambda/lambda.zip \
             StepFunctionKey=stepfunctions/ecommerce-step.json \
             EnvironmentName=${{ env.ENV_NAME }} \

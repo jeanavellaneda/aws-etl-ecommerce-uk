@@ -33,20 +33,22 @@ schema = StructType([
 # Leer archivo CSV usando el esquema definido
 df = spark.read.option("header", "true").option("delimiter", ";").schema(schema).csv(input_path)
 
-# Agregar columna "total"
-df_transformed = df.withColumn("total", col("Quantity") * col("UnitPrice"))
+df_transformed = df.filter(col("CustomerID") != "" or col("CustomerID").isNotNull) \
+.filter(col("UnitPrice") >= 0.0) \
+.filter(col("Quantity") >= 0) \
+.filter(col("Description") != "" or col("Description").isNotNull)
 
 # Imprimir esquema y muestra
 df_transformed.printSchema()
 df_transformed.show(5)
 
 # Guardar en Parquet
-output_path = f"s3://{input_bucket}/gold/ventas_gold"
+output_path = f"s3://{input_bucket}/silver/ecommerce_retail_silver"
 df_transformed.write.mode("overwrite").parquet(output_path)
 
 # Crear tabla externa en Athena
 spark.sql("""
-CREATE EXTERNAL TABLE IF NOT EXISTS db_online_retail.ventas_gold (
+CREATE EXTERNAL TABLE IF NOT EXISTS db_online_retail.ecommerce_retail_silver (
     InvoiceNo string,
     StockCode string,
     Description string,
@@ -54,9 +56,8 @@ CREATE EXTERNAL TABLE IF NOT EXISTS db_online_retail.ventas_gold (
     InvoiceDate string,
     UnitPrice double,
     CustomerID string,
-    Country string,
-    total double
+    Country string
 )
 STORED AS PARQUET
-LOCATION 's3://{input_bucket}/gold/ventas_gold'
+LOCATION 's3://{input_bucket}/silver/ecommerce_retail_silver'
 """)
