@@ -40,7 +40,7 @@ Pipeline ETL end-to-end en AWS que implementa la Arquitectura Medallón (Bronce 
 5. Crear Access Key (tipo: Command Line Interface)
 6. Guardar el Access Key ID y Secret Access Key (solo se muestran una vez)
 
-# 2. AWS CLI
+## 2. AWS CLI
 1. Instala aws cli https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 2. Verifica la instalación: `aws --version`
 3. Configurar: `aws configure`
@@ -102,10 +102,11 @@ git push origin develop
 aws cloudformation describe-stacks --stack-name retail-etl-stack-test --query "Stacks[0].Outputs[?OutputKey=='DataLakeBucket'].OutputValue" --output text
 ```
 
-📌 Nota: Si el archivo tiene espacios en el nombre, usa comillas o renómbralo.
-Ejemplo: "Online Retail.csv"
+📌 Nota: 
+- Si el archivo tiene espacios en el nombre, usa comillas o renómbralo. Ejemplo: "Online Retail.csv"
+- El archivo a subir lo puedes obtener del proyecto /data/Online Retail
 ```Bash
-aws s3 cp "../ruta/data.csv" "s3://<tu-bucket>/bronze/data.csv"
+aws s3 cp "../ruta/Online Retail.csv" "s3://<tu-bucket>/bronze/Online Retail.csv"
 ```
 
 ## 8. Monitorear la ejecución
