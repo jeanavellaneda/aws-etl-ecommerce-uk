@@ -1,0 +1,103 @@
+name: Deploy AWS ETL
+
+on:
+  push:
+     branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - develop
+
+env:
+  ARTIFACTS_BUCKET: ${{ secrets.ARTIFACTS_BUCKET }}
+  REGION: us-east-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.REGION }}
+
+    - name: Verify AWS credentials
+      run: |
+        #aws sts get-caller-identity
+        echo "✅ Credenciales funcionando correctamente"
+
+    # ---------------- MAPEO DE ENTORNO ----------------
+    - name: Set environment name
+      id: set-env
+      run: |
+        BRANCH_NAME="${GITHUB_REF##*/}"
+        if [[ "$BRANCH_NAME" == "main" ]]; then
+          ENV_NAME="prod"
+        elif [[ "$BRANCH_NAME" == "develop" ]]; then
+          ENV_NAME="test"
+        else
+          ENV_NAME="dev"
+        fi
+        echo "ENV_NAME=${ENV_NAME}" >> $GITHUB_ENV
+        echo "GLUE_JOB_BRONZE_NAME=retail-glue-job-bronze-iac-${ENV_NAME}" >> $GITHUB_ENV
+        echo "GLUE_JOB_SILVER_NAME=retail-glue-job-silver-iac-${ENV_NAME}" >> $GITHUB_ENV
+        
+        echo "=== DEBUG ==="
+        echo "Branch: ${BRANCH_NAME}"
+        echo "ENV_NAME: ${ENV_NAME}"
+        echo "GLUE_JOB_BRONZE_NAME: retail-glue-job-bronze-iac-${ENV_NAME}"
+        echo "GLUE_JOB_SILVER_NAME: retail-glue-job-silver-iac-${ENV_NAME}"
+
+    # ---------------- SCRIPTS ----------------
+    - name: Upload Glue script
+      run: |
+        aws s3 cp glue/bronze/ecommerce-glue-job-bronze.py s3://${ARTIFACTS_BUCKET}/scripts/bronze/ecommerce-glue-job-bronze.py
+        aws s3 cp glue/silver/ecommerce-glue-job-silver.py s3://${ARTIFACTS_BUCKET}/scripts/silver/ecommerce-glue-job-silver.py
+        echo "✅ Scripts de Glue subidos correctamente"
+
+    - name: Package Lambda
+      run: |
+        cd lambda
+        zip -r ../lambda.zip ecommerce-lambda.py
+        cd ../
+
+    - name: Upload Lambda
+      run: |
+        aws s3 cp lambda.zip s3://${ARTIFACTS_BUCKET}/lambda/lambda.zip
+
+    # PROCESAR STEP FUNCTION: Reemplazar placeholder con el nombre real del Glue Job
+    - name: Process Step Function Definition
+      run: |
+        echo "Reemplazando placeholders..."
+        sed -e "s/{{GLUE_JOB_BRONZE_NAME}}/${{ env.GLUE_JOB_BRONZE_NAME }}/g" \
+            -e "s/{{GLUE_JOB_SILVER_NAME}}/${{ env.GLUE_JOB_SILVER_NAME }}/g" \
+            step-functions/ecommerce-step.json > step-functions/ecommerce-step-processed.json
+        echo "=== JSON PROCESADO ==="
+        cat step-functions/ecommerce-step-processed.json
+        echo "====================="
+
+    - name: Upload Step Function
+      run: |
+        aws s3 cp step-functions/ecommerce-step-processed.json s3://${ARTIFACTS_BUCKET}/stepfunctions/ecommerce-step.json
+
+    # ---------------- INFRA ----------------
+    - name: Deploy CloudFormation
+      run: |
+        aws cloudformation deploy \
+          --template-file infrastructure/ecommerce-template.yml \
+          --stack-name retail-etl-stack-${{ env.ENV_NAME }} \
+          --parameter-overrides \
+            ArtifactsBucket=${ARTIFACTS_BUCKET} \
+            GlueScriptBronzeKey=scripts/bronze/ecommerce-glue-job-bronze.py \
+            GlueScriptSilverKey=scripts/silver/ecommerce-glue-job-silver.py \
+            LambdaPackageKey=lambda/lambda.zip \
+            StepFunctionKey=stepfunctions/ecommerce-step.json \
+            EnvironmentName=${{ env.ENV_NAME }} \
+          --capabilities CAPABILITY_NAMED_IAM

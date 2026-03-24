@@ -1,0 +1,449 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ETL Pipeline completo con S3, EventBridge, Lambda, Step Functions, Glue y Athena
+
+Parameters:
+  ArtifactsBucket:
+    Type: String
+    Description: Nombre del bucket S3 donde están los scripts (creado manualmente)
+  
+  GlueScriptBronzeKey:
+    Type: String
+    Description: Ruta del script de Glue bronze en el bucket
+    Default: scripts/bronze/ecommerce-glue-job-bronze.py
+
+  GlueScriptSilverKey:
+    Type: String
+    Description: Ruta del script de Glue silver en el bucket
+    Default: scripts/silver/ecommerce-glue-job-silver.py
+  
+  LambdaPackageKey:
+    Type: String
+    Description: Ruta del zip de Lambda en el bucket
+    Default: lambda/lambda.zip
+  
+  StepFunctionKey:
+    Type: String
+    Description: Ruta de la definición de Step Function
+    Default: stepfunctions/ecommerce-step.json
+  
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - test
+      - prod
+
+Resources:
+# ---------------- S3 ----------------
+  DataLakeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'data-science-retail-bucket-iac-${EnvironmentName}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Suspended
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+# ---------------- IAM ----------------
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "retail-lambda-role-iac-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/retail-lambda-iac-${EnvironmentName}:*"
+        - PolicyName: LambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Ref StepFunction
+        - PolicyName: S3DeletePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                  - s3:ListBucketVersions
+                  - s3:DeleteObjectVersion
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub "arn:aws:s3:::${DataLakeBucket}"
+                  - !Sub "arn:aws:s3:::${DataLakeBucket}/*"
+
+  StepFunctionRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - GlueJobBronze
+      - GlueJobSilver
+    Properties:
+      RoleName: !Sub "retail-step-role-iac-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepGluePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartJobRun
+                  - glue:GetJobRun
+                Resource:
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${GlueJobBronze}"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${GlueJobSilver}"
+
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "retail-glue-role-iac-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: GluePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${ArtifactsBucket}/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${DataLakeBucket}/bronze/*"
+                  - !Sub "arn:aws:s3:::${DataLakeBucket}/silver/*"
+                  - !Sub "arn:aws:s3:::${DataLakeBucket}/*"
+
+# ---------------- LAMBDA ----------------
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "retail-lambda-iac-${EnvironmentName}"
+      Runtime: python3.12
+      Handler: ecommerce-lambda.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          STEP_ARN: !Ref StepFunction
+      Code:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: !Ref LambdaPackageKey
+
+# ---------------- GLUE ----------------
+  GlueJobBronze:
+    Type: AWS::Glue::Job
+    DependsOn: GlueRole
+    Properties:
+      Name: !Sub "retail-glue-job-bronze-iac-${EnvironmentName}"
+      Role: !GetAtt GlueRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${ArtifactsBucket}/${GlueScriptBronzeKey}"
+        PythonVersion: 3
+      GlueVersion: "5.0"
+      DefaultArguments:
+        "--enable-glue-datacatalog": "true"
+        "--job-language": "python"
+        "--TempDir": !Sub "s3://${DataLakeBucket}/temp/"
+        "--enable-continuous-cloudwatch-log": "true"
+        "--enable-metrics": "true"
+
+  GlueJobSilver:
+    Type: AWS::Glue::Job
+    DependsOn: GlueRole
+    Properties:
+      Name: !Sub "retail-glue-job-silver-iac-${EnvironmentName}"
+      Role: !GetAtt GlueRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${ArtifactsBucket}/${GlueScriptSilverKey}"
+        PythonVersion: 3
+      GlueVersion: "5.0"
+      DefaultArguments:
+        "--enable-glue-datacatalog": "true"
+        "--job-language": "python"
+        "--TempDir": !Sub "s3://${DataLakeBucket}/temp/"
+        "--enable-continuous-cloudwatch-log": "true"
+        "--enable-metrics": "true"
+
+# ---------------- STEP FUNCTION ----------------
+  StepFunction:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "retail-step-iac-${EnvironmentName}"
+      RoleArn: !GetAtt StepFunctionRole.Arn
+      DefinitionS3Location:
+        Bucket: !Ref ArtifactsBucket
+        Key: !Ref StepFunctionKey
+
+# ---------------- EVENTBRIDGE ----------------
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "retail-event-iac-${EnvironmentName}"
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref DataLakeBucket
+          object:
+            key:
+              - prefix: "bronze/"
+            version-id:
+              - exists: false
+          reason:
+              - CompleteMultipartUpload
+      Targets:
+        - Arn: !GetAtt LambdaFunction.Arn
+          Id: LambdaTarget
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventRule.Arn
+
+# ---------------- ATHENA (GLUE CATALOG) ----------------
+  AthenaDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub "retail_db_${EnvironmentName}"
+
+  AthenaBronzeTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref AthenaDatabase
+      TableInput:
+        Name: ecommerce_retail_bronze
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Location: !Sub "s3://${DataLakeBucket}/bronze/"
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - Name: InvoiceNo
+              Type: string
+            - Name: StockCode
+              Type: string
+            - Name: Description
+              Type: string
+            - Name: Quantity
+              Type: int
+            - Name: InvoiceDate
+              Type: string
+            - Name: UnitPrice
+              Type: double
+            - Name: CustomerID
+              Type: string
+            - Name: Country
+              Type: string
+
+  AthenaSilverTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref AthenaDatabase
+      TableInput:
+        Name: ecommerce_retail_silver
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Location: !Sub "s3://${DataLakeBucket}/silver/ecommerce_retail_silver/"
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - Name: InvoiceNo
+              Type: string
+            - Name: StockCode
+              Type: string
+            - Name: Description
+              Type: string
+            - Name: Quantity
+              Type: int
+            - Name: InvoiceDate
+              Type: string
+            - Name: UnitPrice
+              Type: double
+            - Name: CustomerID
+              Type: string
+            - Name: Country
+              Type: string
+
+  AthenaGoldTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref AthenaDatabase
+      TableInput:
+        Name: ecommerce_retail_gold
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Location: !Sub "s3://${DataLakeBucket}/gold/ecommerce_retail_gold/"
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - Name: InvoiceNo
+              Type: string
+            - Name: StockCode
+              Type: string
+            - Name: Description
+              Type: string
+            - Name: Quantity
+              Type: int
+            - Name: InvoiceDate
+              Type: string
+            - Name: UnitPrice
+              Type: double
+            - Name: CustomerID
+              Type: string
+            - Name: Country
+              Type: string
+            - Name: total
+              Type: double
+
+  EmptyBucketLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "empty-bucket-lambda-${EnvironmentName}"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn  # puedes reutilizar tu LambdaRole
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import urllib3
+
+          http = urllib3.PoolManager()
+          s3 = boto3.resource('s3')
+
+          def send_response(event, context, status):
+              response_body = {
+                  'Status': status,
+                  'Reason': 'OK',
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId']
+              }
+
+              http.request(
+                  'PUT',
+                  event['ResponseURL'],
+                  body=json.dumps(response_body),
+                  headers={'Content-Type': ''}
+              )
+
+          def handler(event, context):
+              try:
+                  bucket_name = event['ResourceProperties']['BucketName']
+                  bucket = s3.Bucket(bucket_name)
+
+                  if event['RequestType'] == 'Delete':
+                      for obj in bucket.object_versions.all():
+                          obj.delete()
+
+                  send_response(event, context, 'SUCCESS')
+              except Exception as e:
+                  print(e)
+                  send_response(event, context, 'FAILED')
+
+  EmptyBucketCustom:
+    Type: Custom::EmptyBucket
+    Properties:
+      ServiceToken: !GetAtt EmptyBucketLambda.Arn
+      BucketName: !Ref DataLakeBucket
+
+# ---------------- OUTPUTS ----------------
+Outputs:
+  DataLakeBucket:
+    Description: Data lake bucket name
+    Value: !Ref DataLakeBucket
+  
+  ArtifactsBucket:
+    Description: Artifacts bucket name (created manually)
+    Value: !Ref ArtifactsBucket
+  
+  LambdaFunction:
+    Description: Lambda function name
+    Value: !Ref LambdaFunction
+  
+  StepFunction:
+    Description: Step Function ARN
+    Value: !Ref StepFunction
+  
+  GlueJobBronze:
+    Description: Glue job bronze name
+    Value: !Ref GlueJobBronze
+
+  GlueJobSilver:
+    Description: Glue job silver name
+    Value: !Ref GlueJobSilver
+  
+  AthenaDatabase:
+    Description: Athena database name
+    Value: !Ref AthenaDatabase
