@@ -2,7 +2,7 @@
 Pipeline ETL end-to-end en AWS que implementa la Arquitectura Medallón (Bronce → Plata → Oro) para datos de transacciones de comercio electrónico. Orquestación automatizada con EventBridge, Lambda y Step Functions. Procesamiento de datos con AWS Glue y consultas con Athena. Infraestructura como código utilizando CloudFormation.
 
 # Arquitectura AWS ETL e-commerce UK
-<img src="assets/arquitectura_aws_etl_ecommerce_uk.jpg"><br>
+<img src="assets/arquitectura_aws_etl_ecommerce_uk.png"><br>
 
 ## 1. Crear un usuario IAM para GitHub Actions
 1. Ve a **IAM Console** → **Users** → **Create user**
